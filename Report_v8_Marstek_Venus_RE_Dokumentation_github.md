@@ -111,13 +111,22 @@ Max. Request: 125 Register pro Read-Request (Modbus-Standard)
 
 ### Register-Adressierung
 
-**Wichtig:** Register sind intern **0-basiert** im Gerät, Modbus-Protokoll sendet ebenfalls 0-basiert.
+**Wichtig:** Marstek verwendet **direkte Adressierung** — die Modbus-PDU-Adresse entspricht exakt der sichtbaren Register-Nummer. Es gibt keinen Offset in irgendeiner Richtung.
 
 ```
-User-Register 30001  →  intern 30000  (0x7530)
-User-Register 34002  →  intern 34001  (0x84D1)
+User-Register 30000  →  PDU-Adresse 30000  (0x7530)   ← kein -1
+User-Register 34002  →  PDU-Adresse 34002  (0x84D2)   ← kein -1
 Grenze Read/Write:   40000 (0x9C40)
 ```
+
+> **Beweis aus TCPRouter.c (Decompilat):**
+> `uVar6 = CONCAT11(param_1[0], param_1[1])` → rohe PDU-Adresse, unverändert.
+> `if (uVar6 < descriptor.base_addr)` → direkter Vergleich, kein Offset.
+> `Serializer.c`: `offset = PDU_addr - base_addr` → bei Reg 30000 und `base_addr=30000` ist Offset=0. ✅
+>
+> **Unterschied zu Standard-Modbus:** Im klassischen Modbus-Standard gilt
+> „Register 1 = PDU-Adresse 0" (User-Nummer minus 1). Marstek ignoriert diese
+> Konvention vollständig. pymodbus-Aufruf: `read_holding_registers(30000)` → korrekt.
 
 ### Register-Bereiche
 
@@ -164,7 +173,7 @@ Größe:       231 × 12 = 2.772 Bytes (bis 0x20000DCC)
 
 ```c
 struct RegisterDescriptor {     // 12 Bytes pro Eintrag
-    uint16_t  base_addr;        // [0:2]  0-basierte Register-Adresse
+    uint16_t  base_addr;        // [0:2]  Direkte PDU-Adresse (= User-Register-Nummer, kein Offset)
     uint16_t  padding;          // [2:4]  unbekannt/padding
     uint32_t* data_ptr;         // [4:8]  SRAM-Zeiger auf Rohdaten
     uint8_t   data_type;        // [8]    Datentyp
@@ -1306,7 +1315,7 @@ Lösungswege:
 
 ```
 Scan-Datum:        Mai 2026
-Methode:           Raw TCP Socket, Batch=32, 1-basierte Adressen
+Methode:           Raw TCP Socket, Batch=32, direkte Adressierung (PDU-Addr = Register-Nr)
 Scanner:           scan_modbus_batch.py v7
 Dauer:             2:30h (Batch=32, Fallback Einzel-Reads, Skip leere Blöcke)
 Gefunden:          413 Register (vorher: 130)
@@ -1451,8 +1460,7 @@ Fehler:  0x0963 (fault_bits, nicht 0!)
 
 ### D.5 Technische Erkenntnisse
 
-**Adressierung:** Marstek verwendet 1-basierte Modbus-Adressen.
-Modbus-Protokoll-Adresse = User-Register-Nummer (kein -1 Offset).
+**Adressierung:** Marstek verwendet **direkte Adressierung** — PDU-Adresse = User-Register-Nummer (kein Offset, kein -1). Beweis: TCPRouter.c vergleicht die rohe PDU-Adresse direkt mit `descriptor.base_addr` ohne jede Korrektur. pymodbus: `read_holding_registers(30000)` → liest Register 30000.
 
 **Maximale Batch-Größe:** 32 Register pro FC03-Request.
 Bei Batch > 32 gibt das Gerät keine Antwort (Timeout, kein Exception-Code).
@@ -1467,4 +1475,3 @@ Nicht verbundene Packs antworten mit 0 für alle Register.
 
 **Fault-Bits 0x0963:** Dieser Wert war auch beim vorherigen Scan vorhanden.
 Bedeutung der einzelnen Bits noch unbekannt.
-
